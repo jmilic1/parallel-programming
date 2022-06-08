@@ -9,7 +9,7 @@ const int TASK_NOT_WORKED_ON = -2;
 const int TASK_BEING_EXECUTED = -3;
 const int TASK_DONE = -4;
 
-const int DEPTH_ALL = 8;
+const int DEPTH_ALL = 9;
 const int DEPTH_MASTER = 3;
 const int DEPTH_WORKER = DEPTH_ALL - DEPTH_MASTER;
 
@@ -38,6 +38,7 @@ const int MAX_TASKS = DIM_TASKS * DIM_TASKS;
 // region board
 struct Board {
     int state;
+    int returnedRow;
     int spaces[height][width];
 };
 
@@ -84,6 +85,7 @@ struct Board *undoMove(struct Board *board, int column){
     for (int i = height - 1; i >= 0; i--){
         if (board->spaces[i][column - 1] != SPACE_EMPTY){
             board->spaces[i][column - 1] = SPACE_EMPTY;
+            board->returnedRow = i;
             return board;
         }
     }
@@ -270,7 +272,6 @@ int checkEndOfGame(struct Board *board, int column, bool debug) {
 
 int checkEndOfBoard(struct Board *board) {
     int result;
-
     for (int i = 1; i <= width; i++) {
         result = checkEndOfGame(board, i, false);
         if (result != STATE_NEUTRAL) {
@@ -283,8 +284,7 @@ int checkEndOfBoard(struct Board *board) {
 double calculateQualityOfMove(double tasks[], int x) {
     double sum = 0;
     for (int y = 0; y <= DIM_TASKS; y++) {
-        double curr = tasks[y * DIM_TASKS + x];
-        sum += curr;
+        sum += tasks[y * DIM_TASKS + x];
     }
 
     return sum / 7;
@@ -302,7 +302,7 @@ void sendEndToAll(int world_size) {
 int getATask(double tasks[], int length) {
     for (int i = 0; i < length; i++) {
         if (tasks[i] == (double) TASK_NOT_WORKED_ON) {
-            printf("returning task %d\n", i);
+//            printf("returning task %d\n", i);
             return i;
         }
     }
@@ -332,16 +332,15 @@ void doMain(int world_size, int rank) {
         return;
     }
 
-    printf("MAIN: entering while loop\n");
     while (true) {
-        time_t now = time(0);
+        time_t start;
+        time(&start);
 
         double tasks[MAX_TASKS];
         for (int i = 0; i < MAX_TASKS; i++) {
             tasks[i] = (double) TASK_NOT_WORKED_ON;
         }
 
-        printf("MAIN: about to send board data\n");
         for (int i = 1; i < world_size; i++) {
             double buf[max_message];
             buf[0] = (double) REQUEST_DATA;
@@ -351,13 +350,11 @@ void doMain(int world_size, int rank) {
                 }
             }
 
-            printf("MAIN: sending board to %d\n", i);
             MPI_Send(buf, max_message, MPI_DOUBLE, i, 0, MPI_COMM_WORLD);
         }
 
         int active_workers = world_size - 1;
         bool done = false;
-        printf("MASTER: entering while !done loop\n");
         while (!done) {
             double buf[max_message];
             MPI_Status status;
@@ -366,29 +363,29 @@ void doMain(int world_size, int rank) {
 
             int sourceIndex = status.MPI_SOURCE;
 
-            printf("MASTER: received from %d ", sourceIndex);
-            switch((int) buf[0]){
-                case REQUEST_RESULT:
-                    printf("REQUEST_RESULT\n");
-                    break;
-                case REQUEST_END:
-                    printf("REQUEST_END\n");
-                    break;
-                case REQUEST_DATA:
-                    printf("REQUEST_DATA\n");
-                    break;
-                case REQUEST_INITIAL:
-                    printf("REQUEST_INITIAL\n");
-                    break;
-                case REQUEST_WAIT:
-                    printf("REQUEST_WAIT\n");
-                    break;
-                case REQUEST_TASK:
-                    printf("REQUEST_TASK\n");
-                    break;
-                default:
-                    printf("UNKNOWN\n");
-            }
+//            printf("MASTER: received from %d ", sourceIndex);
+//            switch((int) buf[0]){
+//                case REQUEST_RESULT:
+//                    printf("REQUEST_RESULT\n");
+//                    break;
+//                case REQUEST_END:
+//                    printf("REQUEST_END\n");
+//                    break;
+//                case REQUEST_DATA:
+//                    printf("REQUEST_DATA\n");
+//                    break;
+//                case REQUEST_INITIAL:
+//                    printf("REQUEST_INITIAL\n");
+//                    break;
+//                case REQUEST_WAIT:
+//                    printf("REQUEST_WAIT\n");
+//                    break;
+//                case REQUEST_TASK:
+//                    printf("REQUEST_TASK\n");
+//                    break;
+//                default:
+//                    printf("UNKNOWN\n");
+//            }
 
             if (buf[0] == (double) REQUEST_INITIAL) {
                 double send_buf[max_message];
@@ -404,7 +401,7 @@ void doMain(int world_size, int rank) {
 //                    printf("tasks[%d] = %d\n", taskId, TASK_BEING_EXECUTED);
                     send_buf[0] = (double) REQUEST_TASK;
                     send_buf[1] = (double) taskId;
-                    printf("MASTER: sending REQUEST_TASK to %d\n", sourceIndex);
+//                    printf("MASTER: sending REQUEST_TASK to %d\n", sourceIndex);
                     MPI_Send(send_buf, max_message, MPI_DOUBLE, sourceIndex, 0, MPI_COMM_WORLD);
                 } else {
                     active_workers--;
@@ -435,13 +432,15 @@ void doMain(int world_size, int rank) {
             }
         }
 
-        time_t end = time(0);
-
-        for (int x = 0; x < DIM_TASKS; x++) {
-            printf("quality of move %d is %f\n", x, qualities[x]);
-        }
+//        for (int x = 0; x < DIM_TASKS; x++) {
+//            printf("quality of move %d is %f\n", x, qualities[x]);
+//        }
         printf("best column: %d\n", indexMax);
-        printf("move was calculated in: %f seconds\n", difftime(end, now));
+
+        time_t end;
+        time(&end);
+
+        printf("move was calculated in: %.2lf seconds\n", difftime(end, start));
 
         printf("MASTER: doing best move on column: %d\n", indexMax);
         board = doMove(board, SPACE_CPU, indexMax + 1);
@@ -541,9 +540,10 @@ void doSlave(int rank) {
     struct Board b;
     struct Board *board = &b;
     b.state = STATE_NEUTRAL;
+    b.returnedRow = 0;
     while (true){
         double buf[max_message];
-        printf("%d slave receiving message\n", rank);
+//        printf("%d slave receiving message\n", rank);
         MPI_Recv(buf, max_message, MPI_DOUBLE, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
         if (buf[0] == (double) REQUEST_END){
@@ -566,7 +566,7 @@ void doSlave(int rank) {
             double send_buf[max_message];
             send_buf[0] = (double) REQUEST_INITIAL;
 
-            printf("slave %d sending REQUEST_INITIAL\n", rank);
+//            printf("slave %d sending REQUEST_INITIAL\n", rank);
             MPI_Send(send_buf, max_message, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
 
             MPI_Recv(buf, max_message, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -590,7 +590,7 @@ void doSlave(int rank) {
 //            int test = checkEndOfGame(board, cpu_move, false);
 //            printf("%d endOfGame after cpu_move: %d\n", rank, test);
             if (checkEndOfGame(board, cpu_move, false) != STATE_NEUTRAL){
-                printf("%d entered cpu_win IF\n", rank);
+//                printf("%d entered cpu_win IF\n", rank);
                 int result = 1;
                 board = undoMove(board, cpu_move);
                 send_buf[0] = (double) REQUEST_RESULT;
@@ -619,9 +619,9 @@ void doSlave(int rank) {
                 continue;
             }
 
-            printf("%d evaluating\n", rank);
+//            printf("%d evaluating\n", rank);
             double result = evaluate(board, true, player_move, DEPTH_WORKER, rank);
-            printf("%d exited evaluate\n", rank);
+//            printf("%d exited evaluate\n", rank);
 
             board = undoMove(board, player_move);
             board = undoMove(board, cpu_move);
@@ -630,7 +630,7 @@ void doSlave(int rank) {
             send_buf[1] = (double) task;
             send_buf[2] = result;
 
-            printf("%d sending REQUEST_RESULT for task %d with result %f", rank, task, result);
+//            printf("%d sending REQUEST_RESULT for task %d with result %f", rank, task, result);
             MPI_Send(send_buf, max_message, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
         }
     }
